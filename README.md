@@ -58,7 +58,6 @@ niulai-simulator/
 - 奔跑动画 9 帧可交互画布，跟随点击节奏变速
 - 战绩分享卡片支持 SVG 二维码（真实可扫，指向 `https://niulai.fattly.cn/`）
 - Canvas 导出 2x 高清战绩海报
-- 访问统计：百度统计 + vaefamily
 
 ## 部署
 
