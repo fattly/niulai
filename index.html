@@ -1476,23 +1476,126 @@ function showResult(){
 }
 
 /* ============ 分享卡 ============ */
-function qrCells(seed){
-  let s=seed;
-  const rnd=()=>{s=(s*9301+49297)%233280;return s/233280;};
-  const n=21,pts=[];
-  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
-    const inFinder=(x<7&&y<7)||(x>=n-7&&y<7)||(x<7&&y>=n-7);
-    if(!inFinder&&rnd()<.44)pts.push([x,y]);
+/* 真实可扫二维码：版本2(25×25) · 纠错M · 字节模式，容量上限26字节（QR_URL 变长需升级版本） */
+const QR_URL='https://niulai.fattly.cn/';
+function qrMake(text){
+  const DC=28,ECC=16,N=25;
+  const bytes=[...text].map(c=>c.charCodeAt(0));
+  const bits=[];
+  const put=(v,n)=>{for(let i=n-1;i>=0;i--)bits.push(v>>>i&1);};
+  put(4,4);put(bytes.length,8);for(const b of bytes)put(b,8);
+  const term=Math.min(4,DC*8-bits.length);if(term>0)put(0,term);
+  while(bits.length&7)bits.push(0);
+  const cw=[];
+  for(let i=0;i<bits.length;i+=8){let b=0;for(let j=0;j<8;j++)b=b<<1|bits[i+j];cw.push(b);}
+  for(let p=0xEC;cw.length<DC;cw.push(p),p^=0xFD);
+  /* RS 纠错码字（GF(256)） */
+  const EXP=new Array(512),LOG=new Array(256);
+  for(let i=0,v=1;i<255;i++){EXP[i]=v;LOG[v]=i;v<<=1;if(v&256)v^=0x11d;}
+  for(let i=255;i<512;i++)EXP[i]=EXP[i-255];
+  const mul=(a,b)=>a&&b?EXP[LOG[a]+LOG[b]]:0;
+  let gen=[1];
+  for(let i=0;i<ECC;i++){
+    const ng=new Array(gen.length+1).fill(0);
+    for(let j=0;j<gen.length;j++){ng[j]^=gen[j];ng[j+1]^=mul(gen[j],EXP[i]);}
+    gen=ng;
   }
-  return{n,pts};
+  const res=cw.concat(Array(ECC).fill(0));
+  for(let i=0;i<cw.length;i++){
+    const f=res[i];if(!f)continue;
+    for(let j=1;j<gen.length;j++)res[i+j]^=mul(gen[j],f);
+  }
+  const full=cw.concat(res.slice(DC));
+  /* 功能图形 */
+  const M=Array.from({length:N},()=>Array(N).fill(false));
+  const F=Array.from({length:N},()=>Array(N).fill(false));
+  const set=(x,y,v)=>{M[y][x]=v;F[y][x]=true;};
+  const finder=(cx,cy)=>{
+    for(let dy=-1;dy<=7;dy++)for(let dx=-1;dx<=7;dx++){
+      const x=cx+dx,y=cy+dy;
+      if(x<0||y<0||x>=N||y>=N)continue;
+      const d=Math.max(Math.abs(dx-3),Math.abs(dy-3));
+      set(x,y,d===0||d===1||d===3);
+    }
+  };
+  finder(0,0);finder(N-7,0);finder(0,N-7);
+  for(let i=8;i<N-8;i++){set(i,6,!(i&1));set(6,i,!(i&1));}
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)
+    set(18+dx,18+dy,Math.max(Math.abs(dx),Math.abs(dy))!==1);
+  for(let i=0;i<=8;i++){F[8][i]=true;F[i][8]=true;}
+  for(let i=0;i<8;i++){F[8][N-1-i]=true;F[N-1-i][8]=true;}
+  /* 数据摆位 + 8 种掩码择优 */
+  const FLIP=[
+    (x,y)=>(x+y)%2===0,
+    (x,y)=>y%2===0,
+    (x,y)=>x%3===0,
+    (x,y)=>(x+y)%3===0,
+    (x,y)=>(((x/3)|0)+((y/2)|0))%2===0,
+    (x,y)=>x*y%2+x*y%3===0,
+    (x,y)=>(x*y%2+x*y%3)%2===0,
+    (x,y)=>((x+y)%2+x*y%3)%2===0
+  ];
+  let best=null,bestP=Infinity;
+  for(let mask=0;mask<8;mask++){
+    const m=M.map(r=>r.slice());
+    let i=0;
+    for(let right=N-1;right>=1;right-=2){
+      if(right===6)right=5;
+      for(let vert=0;vert<N;vert++){
+        for(let j=0;j<2;j++){
+          const x=right-j;
+          const y=((right+1)&2)===0?N-1-vert:vert;
+          if(!F[y][x]&&i<full.length*8){
+            m[y][x]=(((full[i>>>3]>>>(7-(i&7)))&1)^(FLIP[mask](x,y)?1:0))===1;
+            i++;
+          }
+        }
+      }
+    }
+    /* 格式信息（纠错M=00） */
+    let rem=mask;
+    for(let k=0;k<10;k++)rem=(rem<<1)^((rem>>>9)*0x537);
+    const fb=(mask<<10|rem)^0x5412;
+    const bit=k=>(fb>>>k)&1;
+    for(let k=0;k<=5;k++)m[k][8]=bit(k);
+    m[7][8]=bit(6);m[8][8]=bit(7);m[8][7]=bit(8);
+    for(let k=9;k<15;k++)m[8][14-k]=bit(k);
+    for(let k=0;k<8;k++)m[8][N-1-k]=bit(k);
+    for(let k=8;k<15;k++)m[N-15+k][8]=bit(k);
+    m[N-8][8]=true;
+    /* 罚分评估（规则1/2/4） */
+    let p=0;
+    for(let y=0;y<N;y++){
+      let run=1;
+      for(let x=1;x<N;x++){
+        if(m[y][x]===m[y][x-1]){run++;if(run===5)p+=3;else if(run>5)p++;}
+        else run=1;
+      }
+    }
+    for(let x=0;x<N;x++){
+      let run=1;
+      for(let y=1;y<N;y++){
+        if(m[y][x]===m[y-1][x]){run++;if(run===5)p+=3;else if(run>5)p++;}
+        else run=1;
+      }
+    }
+    for(let y=0;y<N-1;y++)for(let x=0;x<N-1;x++){
+      const c=m[y][x];
+      if(c===m[y][x+1]&&c===m[y+1][x]&&c===m[y+1][x+1])p+=3;
+    }
+    let dark=0;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++)dark+=m[y][x]?1:0;
+    p+=(Math.ceil(Math.abs(dark*20-N*N*10)/(N*N))-1)*10;
+    if(p<bestP){bestP=p;best=m;}
+  }
+  return best;
 }
-function pseudoQR(seed){
-  const{n,pts}=qrCells(seed);
-  const cs=100/n;
+function qrSVG(){
+  const m=qrMake(QR_URL),n=m.length,cs=100/n;
   let cells='';
-  for(const[x,y]of pts)cells+=`<rect x="${(x*cs).toFixed(2)}" y="${(y*cs).toFixed(2)}" width="${cs.toFixed(2)}" height="${cs.toFixed(2)}"/>`;
-  const finder=(fx,fy)=>`<rect x="${fx*cs}" y="${fy*cs}" width="${7*cs}" height="${7*cs}" fill="none" stroke="currentColor" stroke-width="${cs}"/><rect x="${(fx+2)*cs}" y="${(fy+2)*cs}" width="${3*cs}" height="${3*cs}"/>`;
-  return `<svg viewBox="0 0 100 100">${cells}${finder(0,0)}${finder(14,0)}${finder(0,14)}</svg>`;
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(m[y][x])
+    cells+=`<rect x="${(x*cs).toFixed(2)}" y="${(y*cs).toFixed(2)}" width="${cs.toFixed(2)}" height="${cs.toFixed(2)}"/>`;
+  return `<svg viewBox="0 0 100 100" fill="currentColor">${cells}</svg>`;
 }
 function buildShareCard(){
   const R=G.result;if(!R)return;
@@ -1514,7 +1617,7 @@ function buildShareCard(){
     </div>
     <div class="sc-foot">
       <div class="sc-cta">你敢来<br>试试吗？</div>
-      <div class="sc-qr"><div class="qr-box">${pseudoQR(R.weight)}</div><span>扫码召牛</span></div>
+      <div class="sc-qr"><div class="qr-box">${qrSVG()}</div><span>扫码召牛</span></div>
     </div>`;
   spriteCell($('sc-cow-sprite'),t[3]);
 }
@@ -1638,19 +1741,14 @@ async function renderShareCanvas(R){
   c.fillText('你敢来',64,906);
   c.fillText('试试吗？',64,964);
   c.shadowColor='transparent';c.shadowOffsetX=0;c.shadowOffsetY=0;
-  /* 右下角二维码 */
-  const qx=538,qy=780,qs=148,pad=14;
+  /* 右下角二维码（真实二维码，指向 QR_URL） */
+  const qx=538,qy=780,qs=148,pad=16;
   c.fillStyle='#f0e6d2';rr(c,qx,qy,qs,qs,12);c.fill();
-  const{n,pts}=qrCells(R.weight);
-  const cs=(qs-pad*2)/n;
+  const qm=qrMake(QR_URL),qn=qm.length;
+  const cs=(qs-pad*2)/qn;
   c.fillStyle='#171310';
-  for(const[x,y]of pts)c.fillRect(qx+pad+x*cs,qy+pad+y*cs,cs+.4,cs+.4);
-  const finder=(fx,fy)=>{
-    c.lineWidth=cs;
-    c.strokeRect(qx+pad+(fx+.5)*cs,qy+pad+(fy+.5)*cs,6*cs,6*cs);
-    c.fillRect(qx+pad+(fx+2)*cs,qy+pad+(fy+2)*cs,3*cs,3*cs);
-  };
-  finder(0,0);finder(14,0);finder(0,14);
+  for(let y=0;y<qn;y++)for(let x=0;x<qn;x++)
+    if(qm[y][x])c.fillRect(qx+pad+x*cs,qy+pad+y*cs,cs+.4,cs+.4);
   c.font='22px "ZCOOL QingKe HuangYou","PingFang SC",sans-serif';
   c.fillStyle='#b7a88d';
   drawSpaced(c,'扫码召牛',qx+qs/2,qy+qs+34,6);
