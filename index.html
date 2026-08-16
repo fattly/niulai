@@ -795,25 +795,41 @@ const RUN_BASELINE=548;
 const RUN_CELLS=[];
 const PX1='data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 function buildRunCells(){
-  const src=new Image();
-  src.onload=()=>{
-    RUN_FRAMES.forEach(([sx,sy,sw,sh],i)=>{
-      const cv=document.createElement('canvas');
-      cv.width=RUN_CANVAS;cv.height=RUN_CANVAS;
-      const ctx=cv.getContext('2d');
-      ctx.imageSmoothingEnabled=true;
-      ctx.imageSmoothingQuality='high';
-      ctx.drawImage(src,sx,sy,sw,sh,Math.round((RUN_CANVAS-sw)/2),RUN_BASELINE-sh,sw,sh);
-      RUN_CELLS[i]=cv.toDataURL();
-    });
-    /* 素材若在页面打开后才完成解码，立刻补上当前帧，避免首帧透明。 */
-    if(G.state==='game'){
-      const idx=runCellOf(G.score);
-      $('bull-img-a').src=RUN_CELLS[idx];
-      $('bull-img-b').src=RUN_CELLS[idx];
-    }
+  const sources=[ASSETS.runSheet,ASSETS.runSheetFallback];
+  const trySource=sourceIndex=>{
+    const src=new Image();
+    const tryNext=err=>{
+      console.warn('奔跑牛素材处理失败：',sources[sourceIndex],err||'图片无法解码');
+      if(sourceIndex+1<sources.length)trySource(sourceIndex+1);
+      else enableBullFallback();
+    };
+    src.onload=()=>{
+      try{
+        const cells=RUN_FRAMES.map(([sx,sy,sw,sh])=>{
+          const cv=document.createElement('canvas');
+          cv.width=RUN_CANVAS;cv.height=RUN_CANVAS;
+          const ctx=cv.getContext('2d');
+          if(!ctx)throw new Error('Canvas 2D 不可用');
+          ctx.imageSmoothingEnabled=true;
+          if('imageSmoothingQuality' in ctx)ctx.imageSmoothingQuality='high';
+          ctx.drawImage(src,sx,sy,sw,sh,Math.round((RUN_CANVAS-sw)/2),RUN_BASELINE-sh,sw,sh);
+          const data=cv.toDataURL('image/png');
+          if(!data||data==='data:,')throw new Error('Canvas 导出失败');
+          return data;
+        });
+        RUN_CELLS.splice(0,RUN_CELLS.length,...cells);
+        /* 素材若在页面打开后才完成解码，立刻补上当前帧，避免首帧透明。 */
+        if(G.state==='game'&&!G.bullFallback){
+          const idx=runCellOf(G.score);
+          $('bull-img-a').src=RUN_CELLS[idx];
+          $('bull-img-b').src=RUN_CELLS[idx];
+        }
+      }catch(err){tryNext(err);}
+    };
+    src.onerror=()=>tryNext();
+    src.src=sources[sourceIndex];
   };
-  src.src=ASSETS.runSheet;
+  trySource(0);
 }
 /* 均匀渐进：第1格锚定0分，第9格锚定112分（≈顶尖玩家10秒实战分），每14分推进一格 */
 function runCellOf(s){
@@ -961,6 +977,7 @@ const ASSETS={
   crashBull:'./images/crash-bull.webp',
   levelSheet:'./images/level_list.webp',
   runSheet:'./images/run.webp',
+  runSheetFallback:'./images/run.png',
   cowMp3:'./audio/cow.mp3'
 };
 Object.values(ASSETS).forEach(src=>{
@@ -976,13 +993,18 @@ buildRunCells();
 $('home-hero-img').addEventListener('error',()=>{
   $('home-hero').innerHTML=bullSVG(false);
 });
+function enableBullFallback(){
+  if(G.bullFallback)return;
+  G.bullFallback=true;
+  ['bull-img-a','bull-img-b'].forEach(id=>{$(id).style.display='none';});
+  if(!$('bull-inner').querySelector('.bull-svg')){
+    $('bull-inner').insertAdjacentHTML('beforeend',bullSVG(true));
+  }
+}
 ['bull-img-a','bull-img-b'].forEach(id=>{
   $(id).addEventListener('error',e=>{
     e.target.style.display='none';
-    if(!G.bullFallback){
-      G.bullFallback=true;
-      $('bull-inner').insertAdjacentHTML('beforeend',bullSVG(true));
-    }
+    enableBullFallback();
   });
 });
 (function specks(){

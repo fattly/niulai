@@ -45,7 +45,8 @@ niulai-simulator/
 │   ├── home-hero.webp    # 首页主视觉
 │   ├── crash-bull.webp   # 结算页牛图雪碧图
 │   ├── level_list.webp   # 等级展示雪碧图
-│   └── run.webp          # 奔跑动画雪碧图（9 帧）
+│   ├── run.webp          # 奔跑动画雪碧图（9 帧）
+│   └── run.png           # 手机 WebView 兼容兜底
 └── audio/
     └── cow.mp3           # 牛叫声
 ```
